@@ -14,7 +14,7 @@ def get_default_gateway():
 def snmp_get(host, oid, community="public"):
     """Vykoná SNMP GET dotaz na daný OID."""
     try:
-        iterator = getCmd(
+        iterator = get_cmd(
             SnmpEngine(),
             CommunityData(community),
             UdpTransportTarget((host, 161)),
@@ -37,7 +37,7 @@ def get_routing_table(router_ip, community="public"):
     oid_routing_table = "1.3.6.1.2.1.4.21.1.1"  # IP Route Table
     routing_table = []
     try:
-        for error_indication, error_status, error_index, var_binds in nextCmd(
+        for error_indication, error_status, error_index, var_binds in next_cmd(
             SnmpEngine(),
             CommunityData(community),
             UdpTransportTarget((router_ip, 161)),
@@ -81,7 +81,7 @@ def discover_network_topology(start_router_ip, community="public"):
 def main():
     """Hlavní funkce aplikace."""
     print("Zjišťuji výchozí bránu...")
-    default_gateway = get_default_gateway()
+    default_gateway = "10.0.2.254"
     if not default_gateway:
         print("Nepodařilo se zjistit výchozí bránu.")
         return

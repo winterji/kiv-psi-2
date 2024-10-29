@@ -2,9 +2,10 @@ from pysnmp.hlapi.v3arch.asyncio import *
 from pysnmp import debug
 from scapy.all import conf, sr1, DHCP
 import ipaddress
+import asyncio
 
 # Enabling debugging to see SNMP operations
-debug.setLogger(debug.Debug('all'))
+# debug.setLogger(debug.Debug('all'))
 
 def get_default_gateway():
     """Zjistí výchozí bránu pomocí DHCP."""
@@ -36,53 +37,55 @@ def snmp_get(host, oid, community="public"):
         print(f"SNMP error on host {host}: {e}")
         return None
 
-def get_routing_table(router_ip, community="public"):
+async def get_routing_table(router_ip, community="PSIPUB"):
     """Získá směrovací tabulku z routeru."""
     oid_routing_table = "1.3.6.1.2.1.4.21.1.1"  # IP Route Table
     routing_table = []
     try:
-        for error_indication, error_status, error_index, var_binds in nextCmd(
+        for error_indication, error_status, error_index, var_binds in await getCmd(
             SnmpEngine(),
             CommunityData(community),
-            UdpTransportTarget((router_ip, 161)),
+            await UdpTransportTarget.create((router_ip, 161)),
             ContextData(),
             ObjectType(ObjectIdentity(oid_routing_table)),
             lexicographicMode=False,
         ):
             if error_indication or error_status:
                 raise Exception(error_indication or error_status)
+            print(var_binds)
             for var_bind in var_binds:
+                print(f"Raw SNMP response: {var_bind}")
                 routing_table.append(str(var_bind[1]))
         return routing_table
     except Exception as e:
         print(f"Failed to fetch routing table from {router_ip}: {e}")
         return []
 
-def discover_network_topology(start_router_ip, community="public"):
+async def discover_network_topology(start_router_ip, community="PSIPUB"):
     """Rekurzivně zjišťuje topologii sítě."""
     visited = set()
     topology = {}
 
-    def discover(router_ip):
+    async def discover(router_ip):
         if router_ip in visited:
             return
         visited.add(router_ip)
         print(f"Discovering router: {router_ip}")
         topology[router_ip] = []
-        routes = get_routing_table(router_ip, community)
+        routes = await get_routing_table(router_ip, community)
         for route in routes:
             try:
                 ip = str(ipaddress.ip_address(route))
                 topology[router_ip].append(ip)
                 if ip not in visited:
-                    discover(ip)
+                    await discover(ip)
             except ValueError:
                 continue
 
-    discover(start_router_ip)
+    await discover(start_router_ip)
     return topology
 
-def main():
+async def main():
     """Hlavní funkce aplikace."""
     print("Zjišťuji výchozí bránu...")
     default_gateway = "10.0.2.254"
@@ -92,10 +95,10 @@ def main():
 
     print(f"Výchozí brána: {default_gateway}")
     print("Zjišťuji topologii sítě...")
-    topology = discover_network_topology(default_gateway)
+    topology = await discover_network_topology(default_gateway, community="PSIPUB")
     print("\nTopologie sítě:")
     for router, neighbors in topology.items():
         print(f"{router} -> {', '.join(neighbors)}")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -9,9 +9,6 @@ import ipaddress
 def dhcp_sniffer(packet):
     if packet.haslayer(DHCP):
         print("Zachycena DHCP odpověď:")
-        # packet.show()
-        # print("----- print packet -------")
-        # Attempt to extract gateway information if available
         try:
             gateway = packet.route()[2]
             print("Gateway: " + gateway)
@@ -29,6 +26,50 @@ def convert_to_ipv4(raw_value):
         print(f"Error converting value to IPv4: {e}")
         return None
 
+async def get_arp_table(router_ip, community="PSIPUB"):
+    oid_arp_table = "1.3.6.1.2.1.4.22"
+    arp_ip_addr_prefix = "SNMPv2-SMI::mib-2.4.22.1.3."
+    arp_table = []
+    stop2 = False
+    try:
+        print("getting arp table")
+        arp_objects = walkCmd(
+            SnmpEngine(),
+            CommunityData(community),
+            await UdpTransportTarget.create((router_ip, 161), timeout=1),
+            ContextData(),
+            ObjectType(ObjectIdentity(oid_arp_table)),
+        )
+
+        async for error_indication, error_status, error_index, var_binds in arp_objects:
+            # Check for errors
+            if error_indication:
+                print(f"Error: {error_indication}")
+                break
+            elif error_status:
+                print(f"SNMP Error: {error_status.prettyPrint()} at {error_index}")
+                break
+            # Process var_binds to extract OIDs and values
+            for var_bind in var_binds:
+                oid, value = var_bind  # Unpack ObjectType
+                if str(oid).startswith(oid_arp_table):
+                    if str(var_bind).startswith(arp_ip_addr_prefix):
+                        addr = str(var_bind).split(" = ")[1]
+                        arp_table.append(addr)
+                        # print(f"OID: {oid}: {addr}")
+                else:
+                    print(f"stopping for {oid}")
+                    stop2 = True
+                    break
+            if stop2:
+                break
+        print(arp_table)
+        return arp_table
+    except Exception as e:
+        print(f"Failed to fetch arp table from {router_ip}: {e}")
+        # print(e.with_traceback(e.__traceback__))
+        return []
+
 # Discover the network topology using SNMP
 async def get_routing_table(router_ip, community="PSIPUB"):
     """Získá směrovací tabulku z routeru."""
@@ -36,15 +77,15 @@ async def get_routing_table(router_ip, community="PSIPUB"):
     routing_table = []
     stop = False
     try:
+        print("getting route table")
         objects = walkCmd(
             SnmpEngine(),
             CommunityData(community),
-            await UdpTransportTarget.create((router_ip, 161), timeout=5),
+            await UdpTransportTarget.create((router_ip, 161), timeout=1),
             ContextData(),
             ObjectType(ObjectIdentity(oid_routing_table)),
             # lexicographicMode=False,
         )
-        print(objects)
         async for error_indication, error_status, error_index, var_binds in objects:
             # Check for errors
             if error_indication:
@@ -59,8 +100,9 @@ async def get_routing_table(router_ip, community="PSIPUB"):
                 oid, value = var_bind  # Unpack ObjectType
                 if str(oid).startswith(oid_routing_table):  # Ensure it's within the OID range
                     addr = convert_to_ipv4(value)
-                    print(f"OID: {oid}, Value: {addr}")
-                    routing_table.append(addr)  # Store the value as a string
+                    # print(f"OID: {oid}, Value: {addr}")
+                    if addr != "0.0.0.0" and addr.endswith(".0"):
+                        routing_table.append(addr)  # Store the value as a string
                 else:
                     print(f"Skipping unrelated OID: {oid}")
                     stop = True
@@ -73,6 +115,17 @@ async def get_routing_table(router_ip, community="PSIPUB"):
         print(f"Failed to fetch routing table from {router_ip}: {e}")
         # print(e.with_traceback(e.__traceback__))
         return []
+
+def submask(addr: str):
+    print(f"net: {addr}")
+    if addr.endswith(".0.0.0"):
+        addr = addr.rsplit("0.0.0", maxsplit=1)[0]
+    elif addr.endswith(".0.0"):
+        addr = addr.rsplit("0.0", maxsplit=1)[0]
+    elif addr.endswith(".0"):
+        addr = addr.rsplit("0", maxsplit=1)[0]
+    print(f"cut as {addr}")
+    return addr
 
 async def discover_network_topology(start_router_ip, community="PSIPUB"):
     """Discover network topology based on SNMP routing information."""
@@ -89,11 +142,17 @@ async def discover_network_topology(start_router_ip, community="PSIPUB"):
         for route in routes:
             try:
                 ip = str(ipaddress.ip_address(route))
-                topology[router_ip].append(ip)
+                # topology[router_ip].append(ip)
                 if ip not in visited:
                     await discover(ip)
             except ValueError:
                 continue
+        arp = await get_arp_table(router_ip, community)
+        net_addr = submask(str(router_ip))
+        print(f"subnet mask for {router_ip}: " + net_addr)
+        for dev in arp:
+            if str(dev).startswith(net_addr):
+                topology[router_ip].append(str(dev))
 
     await discover(start_router_ip)
     print("\nNetwork Topology:")

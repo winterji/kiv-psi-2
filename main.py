@@ -1,6 +1,10 @@
-from pysnmp.hlapi import *
+from pysnmp.hlapi.v3arch.asyncio import *
+from pysnmp import debug
 from scapy.all import conf, sr1, DHCP
 import ipaddress
+
+# Enabling debugging to see SNMP operations
+debug.setLogger(debug.Debug('all'))
 
 def get_default_gateway():
     """Zjistí výchozí bránu pomocí DHCP."""
@@ -14,7 +18,7 @@ def get_default_gateway():
 def snmp_get(host, oid, community="public"):
     """Vykoná SNMP GET dotaz na daný OID."""
     try:
-        iterator = get_cmd(
+        iterator = getCmd(
             SnmpEngine(),
             CommunityData(community),
             UdpTransportTarget((host, 161)),
@@ -37,7 +41,7 @@ def get_routing_table(router_ip, community="public"):
     oid_routing_table = "1.3.6.1.2.1.4.21.1.1"  # IP Route Table
     routing_table = []
     try:
-        for error_indication, error_status, error_index, var_binds in next_cmd(
+        for error_indication, error_status, error_index, var_binds in nextCmd(
             SnmpEngine(),
             CommunityData(community),
             UdpTransportTarget((router_ip, 161)),

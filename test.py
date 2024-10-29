@@ -19,38 +19,59 @@ def dhcp_sniffer(packet):
         except Exception as e:
             print(f"Error extracting gateway: {e}")
 
+def convert_to_ipv4(raw_value):
+    try:
+        # Convert raw bytes to a list of integers
+        ip_parts = [int(b) for b in raw_value]
+        # Join the parts to form the IPv4 address
+        return '.'.join(map(str, ip_parts))
+    except Exception as e:
+        print(f"Error converting value to IPv4: {e}")
+        return None
+
 # Discover the network topology using SNMP
 async def get_routing_table(router_ip, community="PSIPUB"):
     """Získá směrovací tabulku z routeru."""
-    oid_routing_table = "1.3.6.1.2.1.4.21.1.1"  # IP Route Table OID
+    oid_routing_table = "1.3.6.1.2.1.4.21.1.1."  # IP Route Table OID
     routing_table = []
+    stop = False
     try:
-        error_indication, error_status, error_index, var_binds = await nextCmd(
+        objects = walkCmd(
             SnmpEngine(),
             CommunityData(community),
-            await UdpTransportTarget.create((router_ip, 161)),
+            await UdpTransportTarget.create((router_ip, 161), timeout=5),
             ContextData(),
             ObjectType(ObjectIdentity(oid_routing_table)),
-            lexicographicMode=False,
+            # lexicographicMode=False,
         )
-        print(var_binds)
-        for var_bind in var_binds:
-            route = str(var_bind[1])
-            if route != "0.0.0.0":
-                routing_table.append(route)
+        print(objects)
+        async for error_indication, error_status, error_index, var_binds in objects:
+            # Check for errors
+            if error_indication:
+                print(f"Error: {error_indication}")
+                break
+            elif error_status:
+                print(f"SNMP Error: {error_status.prettyPrint()} at {error_index}")
+                break
+
+            # Process var_binds to extract OIDs and values
+            for var_bind in var_binds:
+                oid, value = var_bind  # Unpack ObjectType
+                if str(oid).startswith(oid_routing_table):  # Ensure it's within the OID range
+                    addr = convert_to_ipv4(value)
+                    print(f"OID: {oid}, Value: {addr}")
+                    routing_table.append(addr)  # Store the value as a string
+                else:
+                    print(f"Skipping unrelated OID: {oid}")
+                    stop = True
+                    break
+            if stop:
+                break
         print(routing_table)
-        
-        # if result is None:
-        #     raise Exception(f"No SNMP response from {router_ip}")
-        # for error_indication, error_status, error_index, var_binds in result:
-        #     if error_indication or error_status:
-        #         raise Exception(error_indication or error_status)
-        #     print(var_binds)
-        #     for var_bind in var_binds:
-        #         routing_table.append(str(var_bind[1]))
         return routing_table
     except Exception as e:
         print(f"Failed to fetch routing table from {router_ip}: {e}")
+        # print(e.with_traceback(e.__traceback__))
         return []
 
 async def discover_network_topology(start_router_ip, community="PSIPUB"):
